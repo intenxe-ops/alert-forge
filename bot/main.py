@@ -4,6 +4,7 @@ from dotenv import load_dotenv
 from telegram import Bot
 from telegram.ext import Application, CommandHandler
 from supabase import create_client, Client
+from wallet_monitor import get_wallet_transactions, format_transaction_alert
 
 load_dotenv()
 
@@ -14,6 +15,9 @@ SUPABASE_KEY = os.getenv('SUPABASE_KEY')
 
 # Initialize Supabase
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+# Track seen transactions (prevent duplicates)
+seen_signatures = set()
 
 async def start_command(update, context):
     chat_id = update.effective_chat.id
@@ -30,27 +34,71 @@ async def start_command(update, context):
             f"You're ready to receive alerts.",
             parse_mode='Markdown'
         )
-        print(f"✅ User {chat_id} registered in Supabase")
+        print(f"✅ User {chat_id} registered")
     except Exception as e:
-        await update.message.reply_text(f"❌ Error: {e}")
-        print(f"❌ Supabase error: {e}")
+        print(f"❌ Error: {e}")
 
-async def send_test_alert():
-    bot = Bot(token=TELEGRAM_BOT_TOKEN)
-    await bot.send_message(
-        chat_id=TELEGRAM_CHAT_ID,
-        text="⚡ *ALERT FORGE*\n\n✅ Telegram connected\n✅ Supabase connected\n✅ Monitoring ready",
-        parse_mode='Markdown'
+async def check_wallets(bot: Bot):
+    """Check all active wallets and send alerts for new transactions"""
+    
+    # TEST WALLET - replace with dynamic from Supabase later
+    TEST_WALLET = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"
+    
+    try:
+        txs = get_wallet_transactions(TEST_WALLET, limit=5)
+        
+        for tx in txs:
+            sig = tx.get('signature', '')
+            
+            # Skip if already seen
+            if sig in seen_signatures:
+                continue
+            
+            # New transaction detected
+            seen_signatures.add(sig)
+            
+            # Format and send alert
+            alert = format_transaction_alert(tx, TEST_WALLET)
+            
+            await bot.send_message(
+                chat_id=TELEGRAM_CHAT_ID,
+                text=alert,
+                parse_mode='Markdown',
+                disable_web_page_preview=True
+            )
+            print(f"✅ Alert sent for tx: {sig[:20]}...")
+            
+    except Exception as e:
+        print(f"❌ Wallet check error: {e}")
+
+async def monitoring_loop(bot: Bot):
+    """Run wallet monitoring every 60 seconds"""
+    print("👁 Wallet monitoring started...")
+    
+    # Load existing signatures on startup (prevent spam)
+    TEST_WALLET = "9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM"
+    existing = get_wallet_transactions(TEST_WALLET, limit=10)
+    for tx in existing:
+        seen_signatures.add(tx.get('signature', ''))
+    print(f"📋 Loaded {len(seen_signatures)} existing transactions")
+    
+    while True:
+        await check_wallets(bot)
+        await asyncio.sleep(60)
+
+async def post_init(application):
+    """Start monitoring loop after bot initializes"""
+    asyncio.create_task(
+        monitoring_loop(application.bot)
     )
-    print("✅ Test alert sent")
 
 def main():
     print("🚀 Alert Forge starting...")
-    print(f"📡 Supabase: {SUPABASE_URL}")
-    asyncio.get_event_loop().run_until_complete(send_test_alert())
-    app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
+    
+    app = Application.builder().token(TELEGRAM_BOT_TOKEN).post_init(post_init).build()
     app.add_handler(CommandHandler("start", start_command))
-    print("✅ Bot running.")
+    
+    print("✅ Bot running. Monitoring wallets...")
     app.run_polling()
 
 if __name__ == "__main__":
