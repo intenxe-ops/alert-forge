@@ -128,79 +128,6 @@ async def check_wallet_monitoring():
     except Exception as e:
         print(f"❌ Wallet monitoring error: {e}")
 
-async def check_payment_monitoring():
-    """Check payment wallet for USDC payments"""
-    try:
-        txs = get_wallet_transactions(PAYMENT_WALLET, limit=10)
-        
-        for tx in txs:
-            sig = tx.get('signature', '')
-            
-            if is_signature_seen(sig):
-                continue
-            
-            # Check for USDC transfers
-            token_transfers = tx.get('tokenTransfers', [])
-            
-            for transfer in token_transfers:
-                if (transfer.get('mint') == USDC_MINT and 
-                    transfer.get('toUserAccount') == PAYMENT_WALLET):
-                    
-                    amount = transfer.get('tokenAmount', 0)
-                    from_wallet = transfer.get('fromUserAccount', '')
-                    
-                    print(f"💰 Payment detected: {amount} USDC from {from_wallet[:8]}")
-                    
-                    # Determine tier
-                    if amount >= 30:
-                        new_tier = 'premium'
-                        tier_name = 'Premium'
-                    elif amount >= 10:
-                        new_tier = 'pro'
-                        tier_name = 'Pro'
-                    else:
-                        print(f"⚠️ Payment too low: {amount} USDC")
-                        mark_signature_seen(sig, PAYMENT_WALLET)
-                        continue
-                    
-                    # Find user by their watched wallet
-                    bots = supabase.table('bots').select('user_id').eq('wallet_address', from_wallet).execute()
-                    
-                    if bots.data:
-                        user_id = bots.data[0]['user_id']
-                        
-                        # Get chat_id
-                        user = supabase.table('users').select('telegram_chat_id').eq('id', user_id).execute()
-                        
-                        if user.data:
-                            chat_id = user.data[0]['telegram_chat_id']
-                            
-                            # Upgrade tier
-                            supabase.table('users').update({'subscription_tier': new_tier}).eq('id', user_id).execute()
-                            
-                            print(f"✅ Upgraded user {chat_id} to {tier_name}")
-                            
-                            # Send confirmation
-                            try:
-                                await bot.send_message(
-                                    chat_id=chat_id,
-                                    text=(
-                                        f"🎉 PAYMENT CONFIRMED\n\n"
-                                        f"✅ Upgraded to {tier_name}\n"
-                                        f"💰 {amount} USDC received\n\n"
-                                        f"You can now monitor more wallets!\n"
-                                        f"Use /list to see your limits."
-                                    )
-                                )
-                            except Exception as e:
-                                print(f"❌ Telegram send error: {e}")
-                    
-                    # Mark payment as seen
-                    mark_signature_seen(sig, PAYMENT_WALLET)
-        
-    except Exception as e:
-        print(f"❌ Payment monitoring error: {e}")
-
 async def monitoring_loop():
     """Main monitoring loop - runs every 60 seconds"""
     print("🚀 Alert Forge Monitor starting...")
@@ -225,7 +152,6 @@ async def monitoring_loop():
     while True:
         try:
             await check_wallet_monitoring()
-            await check_payment_monitoring()
             await asyncio.sleep(60)
         except Exception as e:
             print(f"❌ Loop error: {e}")
