@@ -141,11 +141,22 @@ CREATE TABLE seen_signatures (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Payment tracking (prevents signature reuse)
+CREATE TABLE processed_payments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  signature TEXT UNIQUE NOT NULL,
+  user_id UUID REFERENCES users(id),
+  amount NUMERIC NOT NULL,
+  tier_granted TEXT NOT NULL,
+  processed_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- Indexes
 CREATE INDEX idx_user_chat_id ON users(telegram_chat_id);
 CREATE INDEX idx_bot_wallet ON bots(wallet_address);
 CREATE INDEX idx_bot_user ON bots(user_id);
 CREATE INDEX idx_sig ON seen_signatures(signature);
+CREATE INDEX idx_payment_sig ON processed_payments(signature);
 ```
 
 5. **Deploy monitoring:**
@@ -206,6 +217,14 @@ seen_signatures
 ├─ signature (TEXT, unique)
 ├─ wallet_address (TEXT)
 └─ created_at (TIMESTAMPTZ)
+
+processed_payments
+├─ id (UUID)
+├─ signature (TEXT, unique)
+├─ user_id (UUID → users.id)
+├─ amount (NUMERIC)
+├─ tier_granted (TEXT)
+└─ processed_at (TIMESTAMPTZ)
 ```
 
 ---
