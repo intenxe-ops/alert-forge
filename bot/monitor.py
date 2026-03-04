@@ -52,13 +52,80 @@ def mark_signature_seen(signature: str, wallet_address: str):
     except Exception as e:
         print(f"⚠️ Mark seen error: {e}")
 
+def get_token_metadata(mint_address: str) -> dict:
+    """Fetch token name, symbol, decimals from Helius"""
+    url = "https://api.helius.xyz/v0/token-metadata"
+    params = {"api-key": HELIUS_API_KEY}
+    
+    payload = {"mintAccounts": [mint_address]}
+    
+    try:
+        response = requests.post(url, params=params, json=payload)
+        response.raise_for_status()
+        data = response.json()
+        
+        if data and len(data) > 0:
+            token_data = data[0]
+            
+            # Extract from nested structure
+            symbol = token_data.get('onChainMetadata', {}).get('metadata', {}).get('data', {}).get('symbol', 'UNKNOWN')
+            name = token_data.get('onChainMetadata', {}).get('metadata', {}).get('data', {}).get('name', 'Unknown Token')
+            decimals = token_data.get('onChainAccountInfo', {}).get('accountInfo', {}).get('data', {}).get('parsed', {}).get('info', {}).get('decimals', 9)
+            
+            return {
+                'symbol': symbol,
+                'name': name,
+                'decimals': decimals
+            }
+        return {'symbol': 'UNKNOWN', 'name': 'Unknown Token', 'decimals': 9}
+    except Exception as e:
+        print(f"⚠️ Token metadata error: {e}")
+        return {'symbol': 'UNKNOWN', 'name': 'Unknown Token', 'decimals': 9} 
+
 def format_transaction_alert(tx: dict, wallet_address: str) -> str:
-    """Format transaction into Telegram message"""
+    """Format transaction into Telegram message with token support"""
     tx_type = tx.get('type', 'UNKNOWN')
     signature = tx.get('signature', '')[:20]
     fee = tx.get('fee', 0) / 1e9
     
-    # Get SOL balance change
+    # Check for token transfers FIRST
+    token_transfers = tx.get('tokenTransfers', [])
+    
+    if token_transfers:
+        # Find transfers involving this wallet
+        for transfer in token_transfers:
+            from_addr = transfer.get('fromUserAccount', '')
+            to_addr = transfer.get('toUserAccount', '')
+            
+            if wallet_address in [from_addr, to_addr]:
+                # This is a token transfer for our wallet
+                mint = transfer.get('mint', '')
+                raw_amount = transfer.get('tokenAmount', 0)
+                
+                # Get token metadata
+                token_info = get_token_metadata(mint)
+                symbol = token_info['symbol']
+                
+                # Helius returns human-readable amount
+                amount = raw_amount
+                
+                # Determine direction
+                if to_addr == wallet_address:
+                    direction = "📈 RECEIVED"
+                else:
+                    direction = "📉 SENT"
+                
+                return (
+                    f"⚡ ALERT FORGE - Token Transfer\n\n"
+                    f"👛 Wallet: `{wallet_address[:8]}...{wallet_address[-8:]}`\n"
+                    f"🪙 Token: {symbol}\n"
+                    f"{direction}: {amount:.4f} {symbol}\n"
+                    f"⛽ Fee: {fee:.6f} SOL\n"
+                    f"🔗 Sig: `{signature}...`\n\n"
+                    f"[View on Solscan](https://solscan.io/tx/{tx.get('signature', '')})"
+                )
+    
+    # If no token transfers, show SOL balance change
     account_changes = tx.get('accountData', [])
     sol_change = 0
     for account in account_changes:
@@ -131,7 +198,7 @@ async def check_wallet_monitoring():
 async def monitoring_loop():
     """Main monitoring loop - runs every 60 seconds"""
     print("🚀 Alert Forge Monitor starting...")
-    print(f"📡 Monitoring wallet transactions and payments")
+    print(f"📡 Monitoring wallet transactions")
     
     # ONE-TIME SEED: Load existing transactions to prevent spam
     print("📋 Seeding existing transactions...")
